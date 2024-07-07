@@ -371,7 +371,9 @@ class WriteTSV(ResultWriter):
         for segment in result["segments"]:
             print(round(1000 * segment["start"]), file=file, end="\t")
             print(round(1000 * segment["end"]), file=file, end="\t")
+            print(segment['speaker'], file=file, end="\t")
             print(segment["text"].strip().replace("\t", " "), file=file, flush=True)
+
 
 class WriteAudacity(ResultWriter):
     """
@@ -394,7 +396,78 @@ class WriteAudacity(ResultWriter):
             print(segment["end"], file=file, end=ARROW)
             print( ( ("[[" + segment["speaker"] + "]]") if "speaker" in segment else "") + segment["text"].strip().replace("\t", " "), file=file, flush=True)
 
-            
+
+class WriteDiarization(ResultWriter):
+    """
+    Write a diarized transcript to a file in TSV (tab-separated values) format. Each line of the
+    output file contains the start time, end time, speaker, and concatenated text for a segment
+    of speech. The format of each line is as follows:
+    
+    <start time in duration timestamp>\t<end time in integer milliseconds>\t<speaker>\t<transcript text>
+
+    The function processes the input segments, and if consecutive segments have the same speaker,
+    it concatenates their texts and updates the end time accordingly. This helps in creating a 
+    more readable and continuous transcript by merging segments with the same speaker.
+
+    Using integer milliseconds for start and end times avoids issues with decimal points being 
+    represented as commas in different language settings. It also improves efficiency in parsing 
+    and storage, especially in environments like C++ where precise control over data formats is crucial.
+
+    Parameters:
+    - result (dict): The result dictionary containing segments of the diarized transcript.
+    - file (TextIO): The file object to write the TSV output.
+    - options (dict): Additional options that may be used for customization (currently unused).
+
+    Example line in the output TSV file:
+    1610\t4890\tSpeaker 1\tHello, this is a test of the diarization writer.
+    """
+
+    extension: str = "diarized.tsv"
+
+    def write_result(self, result: dict, file: TextIO, options: dict):
+        print("start", "end", "speaker", "text", sep="\t", file=file)
+
+        previous_speaker = None
+        current_start = None
+        current_end = None
+        current_text = []
+
+        for segment in result["segments"]:
+            start = segment["start"]
+            end = segment["end"]
+            speaker = segment.get("speaker", "")
+            text = segment["text"].strip().replace("\t", " ")
+
+            if previous_speaker is None:
+                # Initial segment
+                previous_speaker = speaker
+                current_start = start
+                current_end = end
+                current_text.append(text)
+            elif speaker == previous_speaker:
+                # Concatenate text if the speaker is the same
+                current_end = end
+                current_text.append(text)
+            else:
+                # Write the previous segment
+                print(format_timestamp(current_start, True, "."), file=file, end="\t")
+                print(format_timestamp(current_end, True, "."), file=file, end="\t")
+                print(previous_speaker, file=file, end="\t")
+                print(" ".join(current_text), file=file, flush=True)
+
+                # Reset for the new segment
+                previous_speaker = speaker
+                current_start = start
+                current_end = end
+                current_text = [text]
+
+        # Write the last segment
+        if previous_speaker is not None:
+            print(format_timestamp(current_start, True, "."), file=file, end="\t")
+            print(format_timestamp(current_end, True, "."), file=file, end="\t")
+            print(previous_speaker, file=file, end="\t")
+            print(" ".join(current_text), file=file, flush=True)            
+
 
 class WriteJSON(ResultWriter):
     extension: str = "json"
@@ -415,6 +488,7 @@ def get_writer(
     }
     optional_writers = {
         "aud": WriteAudacity,
+        "diarized.tsv": WriteDiarization,
     }
 
     if output_format == "all":
